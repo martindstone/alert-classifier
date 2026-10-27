@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react';
-import { Alert, Container, Paper, Stack, Text, Title } from '@mantine/core';
+import { Alert, Container, MultiSelect, Paper, Stack, Text, Title } from '@mantine/core';
 import { useQuery } from '@tanstack/react-query';
 import { IconAlertCircle } from '@tabler/icons-react';
 import { ConnectionPanel, toLocalInput, type ConnectionState } from './components/ConnectionPanel';
@@ -39,6 +39,8 @@ export default function App() {
   const [progress, setProgress] = useState(0);
   const [minCount, setMinCount] = useState(5);
   const [selected, setSelected] = useState<string[]>([]);
+  /** Service ids to keep; empty means all services. */
+  const [serviceFilter, setServiceFilter] = useState<string[]>([]);
   const [windowMinutes, setWindowMinutes] = useState(5);
   const tokenRef = useRef(conn.token);
   tokenRef.current = conn.token;
@@ -69,6 +71,7 @@ export default function App() {
 
   const start = (source: FetchRequest['source']) => {
     setSelected([]);
+    setServiceFilter([]);
     setRequest({
       nonce: Date.now(),
       source,
@@ -79,7 +82,22 @@ export default function App() {
     });
   };
 
-  const alerts = query.data;
+  const allAlerts = query.data;
+  const serviceOptions = useMemo(() => {
+    const counts = new Map<string, { name: string; n: number }>();
+    for (const a of allAlerts ?? []) {
+      const c = counts.get(a.serviceId) ?? { name: a.serviceName, n: 0 };
+      c.n++;
+      counts.set(a.serviceId, c);
+    }
+    return [...counts]
+      .sort((a, b) => b[1].n - a[1].n)
+      .map(([value, c]) => ({ value, label: `${c.name} (${c.n})` }));
+  }, [allAlerts]);
+  const alerts = useMemo(
+    () => (serviceFilter.length ? allAlerts?.filter((a) => serviceFilter.includes(a.serviceId)) : allAlerts),
+    [allAlerts, serviceFilter],
+  );
   const stats = useMemo(() => (alerts ? computeFieldStats(alerts) : []), [alerts]);
   // A field may stop qualifying when the threshold rises; ignore such stale selections.
   const fields = useMemo(() => {
@@ -116,22 +134,33 @@ export default function App() {
               {(query.error as Error).message}
             </Alert>
           )}
-          {alerts && !query.isFetching && (
+          {allAlerts && !query.isFetching && (
             <Text mt="md" size="sm" c="dimmed">
-              Loaded {alerts.length} alerts{request?.source === 'demo' ? ' (demo data)' : ''}.
+              Loaded {allAlerts.length} alerts{request?.source === 'demo' ? ' (demo data)' : ''}.
             </Text>
           )}
         </Section>
 
         {alerts && alerts.length === 0 && (
           <Alert color="yellow" title="No alerts in that period">
-            Try a wider time range or include both statuses.
+            Try a wider time range, include both statuses, or change the service filter.
           </Alert>
         )}
 
         {alerts && alerts.length > 0 && (
           <>
-            <Section n={2} title="Choose fields to group on">
+            <Section n={2} title="Choose services and fields to group on">
+              <MultiSelect
+                mb="md"
+                label="Services"
+                description="Limit field analysis and grouping to these services (filtered here, after download)"
+                placeholder={serviceFilter.length ? undefined : `All services (${serviceOptions.length})`}
+                data={serviceOptions}
+                value={serviceFilter}
+                onChange={setServiceFilter}
+                searchable
+                clearable
+              />
               <FieldPicker
                 stats={stats}
                 total={alerts.length}
